@@ -151,7 +151,8 @@
   resp <- httr2::request("https://api.openai.com/v1/chat/completions") |>
     httr2::req_headers("Authorization" = paste("Bearer", api_key),
                        "content-type"  = "application/json") |>
-    httr2::req_body_json(body) |>
+    httr2::req_body_raw(jsonlite::toJSON(body, auto_unbox = TRUE),
+                        type = "application/json") |>
     httr2::req_timeout(60) |>
     httr2::req_error(is_error = function(r) FALSE) |>
     httr2::req_perform()
@@ -179,16 +180,15 @@
 .call_gemini <- function(user_msg, system_msg, api_key,
                           model = NULL, max_tokens = 2048,
                           temperature = NULL) {
-  model <- model %||% "gemini-2.5-flash"
+  model <- model %||% "gemini-3.8-flash"
 
   # ── Thinking-model guard ──────────────────────────────────────────────────
-  # Gemini "thinking" models output internal chain-of-thought rather than a
-  # clean response, producing garbled or cut-off text.
-  is_thinking <- grepl("thinking", model, ignore.case = TRUE) ||
-                 grepl("^gemini-3\\.", model, ignore.case = TRUE)
+  # Gemini models whose names contain "thinking" output internal chain-of-thought
+  # rather than a clean response, producing garbled or cut-off text.
+  is_thinking <- grepl("thinking", model, ignore.case = TRUE)
 
   if (is_thinking) {
-    fallback <- "gemini-2.5-flash"
+    fallback <- "gemini-3.8-flash"
     warning(
       "The model '", model, "' is a Gemini 'thinking' model that outputs ",
       "internal reasoning steps rather than a direct response. This produces ",
@@ -494,7 +494,7 @@
 #'   \code{~/.Renviron}.
 #' @param model Character string. Model name for the chosen provider.
 #'   Defaults: Anthropic \eqn{\to} \code{"claude-sonnet-4-6"}, OpenAI
-#'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-2.5-flash"},
+#'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-3.8-flash"},
 #'   Ollama \eqn{\to} \code{"llama3"}.
 #' @param temperature Numeric in \code{[0, 1]}. Controls randomness of the LLM
 #'   output. \code{0} gives the most deterministic (reproducible) output;
