@@ -84,7 +84,7 @@
 #' Returns a list: list(text = "...", metadata = list(...))
 #' @noRd
 .call_llm <- function(user_msg, system_msg, provider, api_key,
-                       model = NULL, max_tokens = 1024,
+                       model = NULL, max_tokens = 2048,
                        temperature = NULL, seed = NULL) {
   .check_httr2()
   switch(provider,
@@ -93,7 +93,7 @@
     openai    = .call_openai(user_msg, system_msg, api_key, model,
                              max_tokens, temperature, seed),
     gemini    = .call_gemini(user_msg, system_msg, api_key, model,
-                             max_tokens, temperature),
+                             max(max_tokens, 8192L), temperature),
     ollama    = .call_ollama(user_msg, system_msg, model, max_tokens),
     stop("Unknown provider '", provider, "'.", call. = FALSE)
   )
@@ -102,7 +102,7 @@
 
 #' @noRd
 .call_anthropic <- function(user_msg, system_msg, api_key,
-                              model = NULL, max_tokens = 1024,
+                              model = NULL, max_tokens = 2048,
                               temperature = NULL, seed = NULL) {
   model <- model %||% "claude-sonnet-4-6"
   body  <- list(model = model, max_tokens = max_tokens, system = system_msg,
@@ -139,7 +139,7 @@
 
 #' @noRd
 .call_openai <- function(user_msg, system_msg, api_key,
-                          model = NULL, max_tokens = 1024,
+                          model = NULL, max_tokens = 2048,
                           temperature = NULL, seed = NULL) {
   model <- model %||% "gpt-4o"
   body  <- list(model = model, max_tokens = max_tokens,
@@ -178,7 +178,7 @@
 
 #' @noRd
 .call_gemini <- function(user_msg, system_msg, api_key,
-                          model = NULL, max_tokens = 2048,
+                          model = NULL, max_tokens = 8192,
                           temperature = NULL) {
   model <- model %||% "gemini-3.8-flash"
 
@@ -262,7 +262,7 @@
 
 
 #' @noRd
-.call_ollama <- function(user_msg, system_msg, model = NULL, max_tokens = 1024) {
+.call_ollama <- function(user_msg, system_msg, model = NULL, max_tokens = 2048) {
   host  <- Sys.getenv("OLLAMA_HOST", "http://localhost:11434")
   model <- model %||% "llama3"
   body  <- list(model = model, stream = FALSE,
@@ -566,6 +566,7 @@ explain <- function(fit,
                     provider    = NULL,
                     api_key     = NULL,
                     model       = NULL,
+                    max_tokens  = 2048,
                     temperature = NULL,
                     seed        = NULL,
                     verbose     = TRUE) {
@@ -584,19 +585,19 @@ explain <- function(fit,
       stop("When 'fit' is a list, all elements must be named.\n",
            "Example: list(naive = fit_glm, adjusted = fit_plglm)", call. = FALSE)
     return(.explain_multiple(fit, context=context, provider=provider,
-                              api_key=api_key, model=model,
+                              api_key=api_key, model=model, max_tokens=max_tokens,
                               temperature=temperature, seed=seed, verbose=verbose))
   }
 
   .explain_single(fit, context=context, provider=provider,
-                  api_key=api_key, model=model,
+                  api_key=api_key, model=model, max_tokens=max_tokens,
                   temperature=temperature, seed=seed, verbose=verbose)
 }
 
 
 #' @noRd
 .explain_single <- function(fit, context=NULL, provider, api_key, model,
-                              temperature=NULL, seed=NULL, verbose=TRUE) {
+                              max_tokens=2048, temperature=NULL, seed=NULL, verbose=TRUE) {
 
   coef_df     <- .get_coef_df(fit)
   method_info <- .describe_method(fit)
@@ -660,7 +661,7 @@ explain <- function(fit,
 
   message("Querying ", provider, " API...")
   result <- .call_llm(user_msg, system_msg, provider, api_key, model,
-                       max_tokens = 1024, temperature = temperature, seed = seed)
+                       max_tokens = max_tokens, temperature = temperature, seed = seed)
 
   if (verbose) {
     cat("\n--- postlink: explain() ---\n\n")
@@ -676,7 +677,7 @@ explain <- function(fit,
 
 #' @noRd
 .explain_multiple <- function(fit_list, context=NULL, provider, api_key, model,
-                               temperature=NULL, seed=NULL, verbose=TRUE) {
+                               max_tokens=2048, temperature=NULL, seed=NULL, verbose=TRUE) {
 
   context_block <- if (!is.null(context))
     paste0("Study context:\n", context, "\n\n") else ""
@@ -712,7 +713,7 @@ explain <- function(fit,
 
   message("Querying ", provider, " API (comparing ", length(fit_list), " models)...")
   result <- .call_llm(user_msg, system_msg, provider, api_key, model,
-                       max_tokens = 1024, temperature = temperature, seed = seed)
+                       max_tokens = max_tokens, temperature = temperature, seed = seed)
 
   if (verbose) {
     cat("\n--- postlink: explain() — Model Comparison ---\n\n")
