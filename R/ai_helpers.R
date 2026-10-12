@@ -133,8 +133,31 @@
 
 #' @noRd
 .call_gemini <- function(user_msg, system_msg, api_key,
-                          model = NULL, max_tokens = 600) {
-  model <- model %||% "gemini-1.5-flash"
+                          model = NULL, max_tokens = 2048) {
+  model <- model %||% "gemini-2.5-flash"
+
+  # ── Thinking-model guard ─────────────────────────────────────────────────────
+  # Gemini "thinking" models (e.g. gemini-3.x-flash, gemini-2.5-flash-thinking,
+  # gemini-flash-thinking) output their internal chain-of-thought rather than a
+  # clean response. This produces garbled, cut-off text that is not usable as a
+  # coefficient interpretation or report.
+  # Detect by name and redirect to the recommended non-thinking alternative.
+  is_thinking <- grepl("thinking", model, ignore.case = TRUE) ||
+                 grepl("^gemini-3\\.", model, ignore.case = TRUE)
+
+  if (is_thinking) {
+    fallback <- "gemini-2.5-flash"
+    warning(
+      "The model '", model, "' is a Gemini 'thinking' model that outputs ",
+      "internal reasoning steps rather than a direct response. This produces ",
+      "garbled or incomplete output for postlink AI features.\n",
+      "Switching to '", fallback, "' instead.\n",
+      "To suppress this warning, set model = '", fallback, "' explicitly.",
+      call. = FALSE
+    )
+    model <- fallback
+  }
+
   combined <- paste0(system_msg, "\n\n", user_msg)
   body  <- list(contents = list(list(parts = list(list(text = combined)))),
                 generationConfig = list(maxOutputTokens = max_tokens))
@@ -150,9 +173,34 @@
 
   if (httr2::resp_status(resp) != 200L) {
     err <- tryCatch(httr2::resp_body_json(resp)$error$message, error=function(e) "")
+    # Friendly message for rate-limiting (free tier)
+    if (grepl("429|RESOURCE_EXHAUSTED|quota|rate", err, ignore.case = TRUE)) {
+      stop(
+        "Gemini API rate limit reached (free tier).\n",
+        "Options:\n",
+        "  1. Wait a few minutes and try again.\n",
+        "  2. Upgrade to a paid Gemini plan for higher rate limits.\n",
+        "  3. Switch to a different provider: explain(fit, provider = 'anthropic')",
+        call. = FALSE
+      )
+    }
     stop("Gemini API error: ", err, call. = FALSE)
   }
-  httr2::resp_body_json(resp)$candidates[[1]]$content$parts[[1]]$text
+
+  # Extract text — handle both standard and thinking-model response shapes
+  candidates <- httr2::resp_body_json(resp)$candidates
+  if (is.null(candidates) || length(candidates) == 0) {
+    stop("Gemini returned no candidates. The model may be unavailable or the request was blocked.",
+         call. = FALSE)
+  }
+  parts <- candidates[[1]]$content$parts
+  if (is.null(parts) || length(parts) == 0) {
+    stop("Gemini returned an empty response. Try a different model or check your API quota.",
+         call. = FALSE)
+  }
+  # Concatenate all text parts (thinking models sometimes split reasoning + answer)
+  texts <- Filter(Negate(is.null), lapply(parts, `[[`, "text"))
+  paste(texts, collapse = "")
 }
 
 
@@ -323,7 +371,7 @@
 #'   \code{~/.Renviron}.
 #' @param model Character string. Model name for the chosen provider.
 #'   Defaults: Anthropic → \code{"claude-sonnet-4-6"}, OpenAI →
-#'   \code{"gpt-4o"}, Gemini → \code{"gemini-1.5-flash"},
+#'   \code{"gpt-4o"}, Gemini → \code{"gemini-2.5-flash"},
 #'   Ollama → \code{"llama3"}.
 #' @param verbose Logical. Print to console. Default \code{TRUE}.
 #'
