@@ -430,7 +430,7 @@ The generated report contains four sections:
 |---|---|---|---|
 | Anthropic (default) | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | `explain(fit, provider="anthropic")` |
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o` | `explain(fit, provider="openai")` |
-| Google Gemini | `GEMINI_API_KEY` | `gemini-2.0-flash` | `explain(fit, provider="gemini")` |
+| Google Gemini | `GEMINI_API_KEY` | `gemini-3.8-flash` | `explain(fit, provider="gemini")` |
 | Ollama (local) | none | `llama3` | `explain(fit, provider="ollama", model="llama3")` |
 
 The provider is auto-detected from whichever environment variable is set.

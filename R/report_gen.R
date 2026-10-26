@@ -52,7 +52,7 @@
 #'   \code{GEMINI_API_KEY}).
 #' @param model Character string. Model name for the chosen provider.
 #'   Defaults: Anthropic \eqn{\to} \code{"claude-sonnet-4-6"}, OpenAI
-#'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-2.0-flash"},
+#'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-3.8-flash"},
 #'   Ollama \eqn{\to} \code{"llama3"}.
 #' @param render Logical. Render after writing. Default \code{FALSE}.
 #'
