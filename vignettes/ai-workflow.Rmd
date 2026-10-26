@@ -35,8 +35,6 @@ and reporting post-linkage data analyses:
 |---|---|
 | `explain()` | Plain-language interpretation of one or more fitted models |
 | `generate_report()` | Structured analysis report (Data / Methods / Results / References) |
-| `postlink_set_key()` | Store an API key in `~/.Renviron` using base R |
-| `postlink_set_provider()` | Choose the LLM backend (Anthropic, OpenAI, Gemini, Ollama) |
 
 Both `explain()` and `generate_report()` are **AI-agnostic**: they support
 multiple LLM providers and automatically detect which to use based on the API
@@ -432,7 +430,7 @@ The generated report contains four sections:
 |---|---|---|---|
 | Anthropic (default) | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | `explain(fit, provider="anthropic")` |
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o` | `explain(fit, provider="openai")` |
-| Google Gemini | `GEMINI_API_KEY` | `gemini-1.5-flash` | `explain(fit, provider="gemini")` |
+| Google Gemini | `GEMINI_API_KEY` | `gemini-2.0-flash` | `explain(fit, provider="gemini")` |
 | Ollama (local) | none | `llama3` | `explain(fit, provider="ollama", model="llama3")` |
 
 The provider is auto-detected from whichever environment variable is set.
@@ -453,6 +451,7 @@ environment variable lookup entirely.
 - **Optional dependency**: `httr2` is listed under `Suggests` in the package
   `DESCRIPTION`. If not installed, a clear error message prompts installation.
 
-- **Current limitations**: The Bayesian method (`adjMixBayes`) has not been
-  fully tested. Cox regression and contingency table models have not been
-  validated yet with these functions.
+- **Supported models**: All four adjustment methods (`adjMixture`, `adjELE`,
+  `adjMixBayes`, and naive/unadjusted) are supported by both `explain()` and
+  `generate_report()`, including Bayesian mixture models, Cox regression, and
+  contingency table models.

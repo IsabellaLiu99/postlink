@@ -180,7 +180,7 @@
 .call_gemini <- function(user_msg, system_msg, api_key,
                           model = NULL, max_tokens = 8192,
                           temperature = NULL) {
-  model <- model %||% "gemini-3.8-flash"
+  model <- model %||% "gemini-2.0-flash"
 
   # ── Thinking-model guard ──────────────────────────────────────────────────
   # Gemini models whose names contain "thinking" output internal chain-of-thought
@@ -188,7 +188,7 @@
   is_thinking <- grepl("thinking", model, ignore.case = TRUE)
 
   if (is_thinking) {
-    fallback <- "gemini-3.8-flash"
+    fallback <- "gemini-2.0-flash"
     warning(
       "The model '", model, "' is a Gemini 'thinking' model that outputs ",
       "internal reasoning steps rather than a direct response. This produces ",
@@ -497,7 +497,7 @@
 #'   \code{~/.Renviron}.
 #' @param model Character string. Model name for the chosen provider.
 #'   Defaults: Anthropic \eqn{\to} \code{"claude-sonnet-4-6"}, OpenAI
-#'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-3.8-flash"},
+#'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-2.0-flash"},
 #'   Ollama \eqn{\to} \code{"llama3"}.
 #' @param max_tokens Integer. Maximum number of tokens in the LLM response.
 #'   Default \code{2048}. Increase for longer or more complex outputs.
