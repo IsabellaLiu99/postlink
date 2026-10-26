@@ -94,7 +94,7 @@
                              max_tokens, temperature, seed),
     gemini    = .call_gemini(user_msg, system_msg, api_key, model,
                              max(max_tokens, 8192L), temperature),
-    ollama    = .call_ollama(user_msg, system_msg, model, max_tokens),
+    ollama    = .call_ollama(user_msg, system_msg, model, max_tokens, temperature),
     stop("Unknown provider '", provider, "'.", call. = FALSE)
   )
 }
@@ -262,12 +262,15 @@
 
 
 #' @noRd
-.call_ollama <- function(user_msg, system_msg, model = NULL, max_tokens = 2048) {
+.call_ollama <- function(user_msg, system_msg, model = NULL, max_tokens = 2048,
+                         temperature = NULL) {
   host  <- Sys.getenv("OLLAMA_HOST", "http://localhost:11434")
   model <- model %||% "llama3"
+  opts  <- list(num_predict = max_tokens)
+  if (!is.null(temperature)) opts$temperature <- temperature
   body  <- list(model = model, stream = FALSE,
                 prompt = paste0(system_msg, "\n\n", user_msg),
-                options = list(num_predict = max_tokens))
+                options = opts)
 
   resp <- tryCatch(
     httr2::request(paste0(host, "/api/generate")) |>
