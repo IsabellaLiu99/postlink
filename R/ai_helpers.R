@@ -496,6 +496,8 @@
 #'   Defaults: Anthropic \eqn{\to} \code{"claude-sonnet-4-6"}, OpenAI
 #'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-3.8-flash"},
 #'   Ollama \eqn{\to} \code{"llama3"}.
+#' @param max_tokens Integer. Maximum number of tokens in the LLM response.
+#'   Default \code{2048}. Increase for longer or more complex outputs.
 #' @param temperature Numeric in \code{[0, 1]}. Controls randomness of the LLM
 #'   output. \code{0} gives the most deterministic (reproducible) output;
 #'   higher values increase creativity/variability. Default is the provider's

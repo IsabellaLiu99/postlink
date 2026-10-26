@@ -41,6 +41,19 @@
 #'   optional: \code{study}, \code{dataset}, \code{n_total},
 #'   \code{outcome_label}, \code{predictor_label},
 #'   \code{linkage_description}.
+#' @param provider Character string. LLM provider for the AI-generated Results
+#'   summary. One of \code{"anthropic"} (default if \code{ANTHROPIC_API_KEY}
+#'   is set), \code{"openai"}, \code{"gemini"}, or \code{"ollama"} (local, no
+#'   key needed). If \code{NULL}, auto-detected from available environment
+#'   variables.
+#' @param api_key Character string. API key for the chosen provider. If
+#'   \code{NULL} (default), read from the appropriate environment variable
+#'   (\code{ANTHROPIC_API_KEY}, \code{OPENAI_API_KEY}, or
+#'   \code{GEMINI_API_KEY}).
+#' @param model Character string. Model name for the chosen provider.
+#'   Defaults: Anthropic \eqn{\to} \code{"claude-sonnet-4-6"}, OpenAI
+#'   \eqn{\to} \code{"gpt-4o"}, Gemini \eqn{\to} \code{"gemini-3.8-flash"},
+#'   Ollama \eqn{\to} \code{"llama3"}.
 #' @param render Logical. Render after writing. Default \code{FALSE}.
 #'
 #' @return Invisibly returns the file path, or the report text if
@@ -48,8 +61,6 @@
 #'
 #' @examples
 #' \dontrun{
-#' postlink_set_key("sk-ant-...")
-#'
 #' data(lifem)
 #' adj <- adjMixture(linked.data = lifem, m.formula = ~ commf + comml,
 #'                   m.rate = 0.05, safe.matches = hndlnk)
