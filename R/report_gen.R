@@ -39,7 +39,7 @@
 #'   \code{"quarto_manuscript"}, \code{"html"}, or \code{"text"}.
 #'   \code{"quarto_manuscript"} produces a publication-ready Quarto document
 #'   with YAML front matter suitable for academic manuscripts, including
-#'   abstract placeholder, author block, and a \code{.bib} references file.
+#'   abstract placeholder and author block.
 #' @param context An optional named list with study context. All fields are
 #'   optional: \code{study}, \code{dataset}, \code{n_total},
 #'   \code{outcome_label}, \code{predictor_label},
@@ -162,13 +162,6 @@ generate_report <- function(fit,
   if (!dir.exists(out_dir) && out_dir != ".") dir.create(out_dir, recursive = TRUE)
   writeLines(report_text, output_file)
   cat("\nReport written to:", normalizePath(output_file, mustWork = FALSE), "\n")
-
-  # For quarto_manuscript: also write companion .bib file
-  if (output_format == "quarto_manuscript") {
-    bib_file <- sub("\\.qmd$", ".bib", output_file)
-    .write_bib(info, bib_file)
-    cat("Bibliography written to:", normalizePath(bib_file, mustWork = FALSE), "\n")
-  }
 
   if (render) {
     if (output_format == "rmd") {
@@ -426,7 +419,6 @@ generate_report <- function(fit,
       "  [Replace with abstract. Briefly describe the study design, the linkage\n",
       "  error correction approach, and the main findings.]\n",
       "keywords: [record linkage, linkage error correction, postlink]\n",
-      "bibliography: postlink_manuscript.bib\n",
       "format:\n",
       "  html:\n",
       "    toc: true\n",
@@ -710,61 +702,6 @@ generate_report <- function(fit,
     })
     paste(c(hdr,sep,rows),collapse="\n")
   }
-}
-
-# ── BibTeX writer ─────────────────────────────────────────────────────────────
-.write_bib <- function(info, bib_file) {
-  entries <- c(
-    # postlink package
-    paste0(
-      "@Manual{postlink2026,\n",
-      "  title  = {{postlink}: Regression Analysis of Probability-Linked Data},\n",
-      "  author = {Bukke, Priyanjali and Kamat, Gaurav and Cui, Jiahao and Gutman, Roee and Slawski, Martin},\n",
-      "  year   = {2026},\n",
-      "  note   = {R package v0.1.0},\n",
-      "  url    = {https://postlink-group.github.io/postlink/}\n",
-      "}"
-    )
-  )
-
-  if (info$is_mixture) {
-    entries <- c(entries, paste0(
-      "@Article{slawski2025,\n",
-      "  title   = {A general framework for regression with mismatched data based on mixture modelling},\n",
-      "  author  = {Slawski, Martin and West, Brady T. and Bukke, Priyanjali and Wang, Zhiwei and Diao, Guoqing and Ben-David, Emanuel},\n",
-      "  journal = {Journal of the Royal Statistical Society Series A},\n",
-      "  year    = {2025},\n",
-      "  volume  = {188},\n",
-      "  number  = {3},\n",
-      "  pages   = {896--919}\n",
-      "}"
-    ))
-  } else if (info$is_ele) {
-    entries <- c(entries, paste0(
-      "@Article{chambers2009,\n",
-      "  title   = {Regression analysis of probability-linked data},\n",
-      "  author  = {Chambers, Ray},\n",
-      "  journal = {Official Statistics Research Series},\n",
-      "  year    = {2009},\n",
-      "  volume  = {4},\n",
-      "  pages   = {1--15}\n",
-      "}"
-    ))
-  } else {
-    entries <- c(entries, paste0(
-      "@Article{gutman2016,\n",
-      "  title   = {Error adjustments for file linking methods using encrypted unique client identifier ({EUCI}) with application to anonymous {HIV} surveillance data},\n",
-      "  author  = {Gutman, Roee and Sammartino, Christopher J. and Green, Traci C. and Montague, Brian T.},\n",
-      "  journal = {Statistics in Medicine},\n",
-      "  year    = {2016},\n",
-      "  volume  = {35},\n",
-      "  number  = {1},\n",
-      "  pages   = {115--129}\n",
-      "}"
-    ))
-  }
-
-  writeLines(paste(entries, collapse="\n\n"), bib_file)
 }
 
 
