@@ -2,89 +2,96 @@
 # preflight.R
 # Option 9: preflight_check()
 #
-# Pre-flight diagnostic tool that evaluates data quality BEFORE running any
-# linkage adjustment models. Checks for common issues that would make results
-# unreliable or models fail to converge.
+# Pre-flight diagnostic tool for probability-linked data. Checks for issues
+# specific to record linkage error correction BEFORE running adjMixture(),
+# adjELE(), or adjMixBayes().
 #
 # Usage:
-#   preflight_check(linked_data, outcome, predictors)
-#   preflight_check(linked_data, outcome, predictors, provider = "anthropic")
+#   preflight_check(linked_data, outcome, predictors, match_prob, method)
+#   preflight_check(..., provider = "anthropic")
 # =============================================================================
 
 
-#' Pre-Flight Data Quality Check Before Linkage Adjustment
+#' Pre-Flight Data Quality Check for Probability-Linked Data
 #'
 #' Evaluates data quality before running linkage error correction models.
-#' Checks for missing values, class imbalance, sample size, distributional
-#' issues, and potential collinearity. Returns a structured diagnostic report
-#' with severity levels (OK, WARNING, ERROR) and optional AI-generated
-#' recommendations.
+#' Unlike general regression diagnostics, all checks are tailored to the
+#' record linkage setting: match probability quality, implied mismatch rate,
+#' differential error risk, and method-specific sample size requirements.
+#' Returns a structured diagnostic report with severity levels and optional
+#' AI-generated recommendations.
 #'
 #' @param linked_data A data frame of linked records (the analysis dataset).
-#' @param outcome Character string. Name of the outcome variable in
-#'   \code{linked_data}.
+#' @param outcome Character string. Name of the outcome variable.
 #' @param predictors Character vector. Names of predictor variables to check.
-#'   If \code{NULL}, all columns except \code{outcome} are used.
-#' @param match_prob Optional numeric vector of posterior correct match
-#'   probabilities (e.g. from \code{adjMixture()$match.prob}). When supplied,
-#'   additional checks on match quality are performed.
-#' @param family Character string. Outcome model family: one of
+#'   If \code{NULL}, all columns except \code{outcome} and \code{match_prob_col}
+#'   are used.
+#' @param match_prob Numeric vector of posterior correct-match probabilities
+#'   (e.g. from the linkage model). Length must equal \code{nrow(linked_data)}.
+#'   Required for all linkage-specific checks.
+#' @param method Character string. The adjustment method the user intends to
+#'   run: \code{"adjMixture"} (default), \code{"adjELE"}, or
+#'   \code{"adjMixBayes"}. Enables method-specific checks.
+#' @param family Character string. Outcome model family:
 #'   \code{"gaussian"} (default), \code{"binomial"}, \code{"poisson"},
 #'   or \code{"cox"}.
-#' @param min_n Integer. Minimum acceptable sample size. Default \code{100}.
-#' @param max_missing Numeric in \code{[0, 1]}. Maximum acceptable missing
-#'   value fraction per variable. Default \code{0.20} (20\%).
+#' @param min_n Integer. Absolute minimum sample size. Default \code{100}.
+#' @param max_missing Numeric in \code{[0,1]}. Max acceptable missing fraction
+#'   per variable. Default \code{0.20}.
 #' @param provider Character string. LLM provider for AI recommendations.
-#'   If \code{NULL} (default), no AI call is made and only the deterministic
-#'   checks are run. Set to \code{"anthropic"}, \code{"openai"},
-#'   \code{"gemini"}, or \code{"ollama"} to enable AI suggestions.
-#' @param api_key Character string. API key for the chosen provider. If
-#'   \code{NULL}, read from the appropriate environment variable.
+#'   \code{NULL} (default) skips the AI call. Options: \code{"anthropic"},
+#'   \code{"openai"}, \code{"gemini"}, \code{"ollama"}.
+#' @param api_key Character string. API key (or \code{NULL} to use env var).
 #' @param model Character string. LLM model name. Provider defaults apply.
-#' @param verbose Logical. Print the diagnostic report to console.
-#'   Default \code{TRUE}.
+#' @param verbose Logical. Print the diagnostic report. Default \code{TRUE}.
 #'
-#' @return Invisibly returns a list of class \code{"postlink_preflight"} with
-#'   elements:
+#' @return Invisibly returns a list of class \code{"postlink_preflight"}:
 #'   \itemize{
-#'     \item \code{checks} — data frame of all checks with columns
-#'       \code{check}, \code{status} (\code{"OK"}, \code{"WARNING"},
-#'       \code{"ERROR"}), \code{detail}, and \code{recommendation}.
-#'     \item \code{n_errors} — number of ERROR-level issues.
-#'     \item \code{n_warnings} — number of WARNING-level issues.
-#'     \item \code{pass} — logical; \code{TRUE} if no ERRORs.
-#'     \item \code{ai_recommendations} — character string of AI suggestions,
-#'       or \code{NULL} if \code{provider} is \code{NULL}.
+#'     \item \code{checks} — data frame with columns \code{check},
+#'       \code{status} (\code{"OK"/"WARNING"/"ERROR"}), \code{detail},
+#'       \code{recommendation}.
+#'     \item \code{n_errors}, \code{n_warnings} — integer counts.
+#'     \item \code{pass} — \code{TRUE} if no ERRORs.
+#'     \item \code{ai_recommendations} — AI suggestions or \code{NULL}.
+#'     \item \code{mismatch_rate} — implied mismatch rate from \code{match_prob}.
 #'   }
 #'
 #' @details
-#' Checks performed:
+#' \strong{Linkage-specific checks performed:}
 #' \itemize{
-#'   \item \strong{Sample size}: flags if \code{n < min_n} (ERROR) or
-#'     \code{n < 200} (WARNING).
+#'   \item \strong{Match probability distribution}: distinguishes records with
+#'     high confidence (prob > 0.9) from ambiguous records (0.3–0.7). A large
+#'     ambiguous zone indicates poor linkage blocking strategy.
+#'   \item \strong{Implied mismatch rate}: \eqn{1 - \bar{p}} where \eqn{\bar{p}}
+#'     is mean match probability. Flags when mismatch is very high (> 30\%)
+#'     or negligibly low (< 1\%), where adjustment adds no value.
+#'   \item \strong{Non-differential linkage error}: tests whether outcome mean
+#'     differs substantially between high- and low-confidence linked records.
+#'     A large difference suggests error is differential w.r.t. the outcome —
+#'     a violation of the \code{adjELE} model assumption.
+#'   \item \strong{Safe matches}: warns if no \code{safe.matches} index is
+#'     likely available, which is recommended for \code{adjMixture} to anchor
+#'     the EM algorithm.
+#'   \item \strong{Method-specific sample size}: \code{adjMixBayes} requires
+#'     larger samples (>= 300 recommended) due to Stan MCMC; \code{adjMixture}
+#'     EM convergence degrades below n = 150 at high mismatch.
 #'   \item \strong{Missing values}: flags variables with missing fraction above
-#'     \code{max_missing} threshold.
-#'   \item \strong{Outcome distribution}: for binomial, checks class balance
-#'     (ERROR if minority class < 5\%, WARNING if < 10\%); for Gaussian,
-#'     checks for near-zero variance.
-#'   \item \strong{Predictor variance}: flags near-constant predictors.
-#'   \item \strong{Collinearity}: flags predictor pairs with \eqn{|r| > 0.95}.
-#'   \item \strong{Match probability quality} (if supplied): flags if mean
-#'     match probability is below 0.5 or if many records have probability < 0.3.
+#'     \code{max_missing}. Missingness in match variables is especially risky.
+#'   \item \strong{Outcome distribution}: family-specific range/balance checks.
 #' }
 #'
 #' @examples
 #' \dontrun{
 #' data(lifem)
-#' adj <- adjMixture(linked.data = lifem, m.formula = ~ commf + comml,
-#'                   m.rate = 0.05, safe.matches = hndlnk)
+#' # Compute match probabilities first (e.g. from fastLink or your linkage step)
+#' # match_prob <- your_linkage_model$posterior
 #'
-#' # Deterministic checks only
 #' result <- preflight_check(
 #'   linked_data = lifem,
 #'   outcome     = "age_at_death",
 #'   predictors  = c("unit_yob", "commf", "comml"),
-#'   match_prob  = adj$match.prob,
+#'   match_prob  = match_prob,
+#'   method      = "adjMixture",
 #'   family      = "gaussian"
 #' )
 #'
@@ -92,9 +99,8 @@
 #' result <- preflight_check(
 #'   linked_data = lifem,
 #'   outcome     = "age_at_death",
-#'   predictors  = c("unit_yob", "commf", "comml"),
-#'   match_prob  = adj$match.prob,
-#'   family      = "gaussian",
+#'   match_prob  = match_prob,
+#'   method      = "adjMixture",
 #'   provider    = "anthropic"
 #' )
 #' }
@@ -102,16 +108,18 @@
 #' @export
 preflight_check <- function(linked_data,
                              outcome,
-                             predictors  = NULL,
-                             match_prob  = NULL,
-                             family      = c("gaussian", "binomial", "poisson", "cox"),
-                             min_n       = 100L,
-                             max_missing = 0.20,
-                             provider    = NULL,
-                             api_key     = NULL,
-                             model       = NULL,
-                             verbose     = TRUE) {
+                             predictors   = NULL,
+                             match_prob   = NULL,
+                             method       = c("adjMixture", "adjELE", "adjMixBayes"),
+                             family       = c("gaussian", "binomial", "poisson", "cox"),
+                             min_n        = 100L,
+                             max_missing  = 0.20,
+                             provider     = NULL,
+                             api_key      = NULL,
+                             model        = NULL,
+                             verbose      = TRUE) {
 
+  method <- match.arg(method)
   family <- match.arg(family)
 
   if (!is.data.frame(linked_data))
@@ -119,266 +127,240 @@ preflight_check <- function(linked_data,
   if (!outcome %in% names(linked_data))
     stop("Outcome variable '", outcome, "' not found in 'linked_data'.", call. = FALSE)
 
-  if (is.null(predictors)) {
+  if (is.null(predictors))
     predictors <- setdiff(names(linked_data), outcome)
-  } else {
-    missing_preds <- setdiff(predictors, names(linked_data))
-    if (length(missing_preds) > 0)
-      stop("Predictor(s) not found in 'linked_data': ",
-           paste(missing_preds, collapse=", "), call. = FALSE)
+  else {
+    bad <- setdiff(predictors, names(linked_data))
+    if (length(bad) > 0)
+      stop("Predictor(s) not found: ", paste(bad, collapse=", "), call. = FALSE)
   }
 
+  n      <- nrow(linked_data)
+  y      <- linked_data[[outcome]]
   checks <- list()
 
-  # ── 1. Sample size ────────────────────────────────────────────────────────
-  n <- nrow(linked_data)
-  if (n < min_n) {
-    checks[["sample_size"]] <- .pf_check(
-      "Sample size",
-      "ERROR",
-      sprintf("n = %d, below minimum threshold of %d.", n, min_n),
-      "Linkage error correction models require sufficient sample sizes. Consider expanding the linked dataset or relaxing linkage criteria."
-    )
-  } else if (n < 200) {
-    checks[["sample_size"]] <- .pf_check(
-      "Sample size",
+  # ── 1. Match probability distribution ─────────────────────────────────────
+  # This is the most postlink-specific check: how well-separated are the probs?
+  if (!is.null(match_prob)) {
+    if (length(match_prob) != n) {
+      checks[["mp_distribution"]] <- .pf_check(
+        "Match probability distribution",
+        "ERROR",
+        sprintf("length(match_prob) = %d but nrow(linked_data) = %d.", length(match_prob), n),
+        "match_prob must be a vector of length nrow(linked_data)."
+      )
+    } else {
+      pct_hi   <- mean(match_prob > 0.9,  na.rm=TRUE)   # confident matches
+      pct_ambig <- mean(match_prob > 0.3 & match_prob <= 0.7, na.rm=TRUE)  # grey zone
+      pct_low  <- mean(match_prob < 0.1,  na.rm=TRUE)   # confident non-matches
+
+      if (pct_ambig > 0.40) {
+        checks[["mp_distribution"]] <- .pf_check(
+          "Match probability distribution",
+          "WARNING",
+          sprintf("%.1f%% of records fall in the ambiguous zone (0.3–0.7). Only %.1f%% are high-confidence (>0.9).",
+                  100*pct_ambig, 100*pct_hi),
+          "A large ambiguous zone reduces adjustment precision. Review linkage blocking variables or add more discriminating matching fields."
+        )
+      } else if (pct_hi < 0.30) {
+        checks[["mp_distribution"]] <- .pf_check(
+          "Match probability distribution",
+          "WARNING",
+          sprintf("Only %.1f%% of records have match probability > 0.9. Linkage confidence is low overall.",
+                  100*pct_hi),
+          "Consider using safe.matches to anchor high-confidence pairs and restrict ambiguous records."
+        )
+      } else {
+        checks[["mp_distribution"]] <- .pf_check(
+          "Match probability distribution",
+          "OK",
+          sprintf("%.1f%% of records are high-confidence (>0.9). Ambiguous zone (0.3–0.7): %.1f%%.",
+                  100*pct_hi, 100*pct_ambig),
+          NULL
+        )
+      }
+    }
+  } else {
+    checks[["mp_distribution"]] <- .pf_check(
+      "Match probability distribution",
       "WARNING",
-      sprintf("n = %d. Linkage error correction models perform best with n >= 200.", n),
-      "Results may be unstable. Interpret with caution and consider bootstrapped confidence intervals."
+      "No match_prob supplied. All linkage-specific checks are skipped.",
+      "Pass match_prob = your_linkage_model$posterior for a full diagnostic."
+    )
+  }
+
+  # ── 2. Implied mismatch rate ───────────────────────────────────────────────
+  mismatch_rate <- NA_real_
+  if (!is.null(match_prob) && length(match_prob) == n) {
+    mismatch_rate <- 1 - mean(match_prob, na.rm=TRUE)
+
+    if (mismatch_rate > 0.30) {
+      checks[["mismatch_rate"]] <- .pf_check(
+        "Implied mismatch rate",
+        "ERROR",
+        sprintf("Implied mismatch rate = %.1f%%. Adjustment models are unreliable above ~30%%.",
+                100*mismatch_rate),
+        "Revisit linkage criteria to improve match quality before proceeding. Consider stricter blocking or threshold tuning."
+      )
+    } else if (mismatch_rate < 0.01) {
+      checks[["mismatch_rate"]] <- .pf_check(
+        "Implied mismatch rate",
+        "WARNING",
+        sprintf("Implied mismatch rate = %.2f%%. Linkage error correction adds negligible value at this rate.",
+                100*mismatch_rate),
+        sprintf("With near-perfect linkage, running a standard %s() without adjustment may be appropriate.",
+                sub("adj", "", method))
+      )
+    } else {
+      checks[["mismatch_rate"]] <- .pf_check(
+        "Implied mismatch rate",
+        "OK",
+        sprintf("Implied mismatch rate = %.1f%%. Within the effective range for %s().",
+                100*mismatch_rate, method),
+        NULL
+      )
+    }
+  }
+
+  # ── 3. Non-differential linkage error (adjELE assumption) ─────────────────
+  # Compare outcome distribution in high-confidence vs low-confidence records.
+  # A large difference suggests differential error — problematic especially for adjELE.
+  if (!is.null(match_prob) && length(match_prob) == n && !any(is.na(c(match_prob, y)))) {
+    hi_mask  <- match_prob > 0.8
+    lo_mask  <- match_prob < 0.5
+
+    if (sum(hi_mask) >= 10 && sum(lo_mask) >= 10) {
+      y_hi <- y[hi_mask]
+      y_lo <- y[lo_mask]
+
+      if (family == "binomial") {
+        diff_prop <- abs(mean(y_hi == 1) - mean(y_lo == 1))
+        threshold <- 0.15
+        detail_fn <- function(d) sprintf("Outcome prevalence: high-confidence = %.1f%%, low-confidence = %.1f%% (diff = %.1f pp).",
+                                          100*mean(y_hi==1), 100*mean(y_lo==1), 100*d)
+      } else {
+        # gaussian / poisson: standardised mean difference
+        pooled_sd <- sd(c(y_hi, y_lo))
+        diff_prop <- if (pooled_sd > 0) abs(mean(y_hi) - mean(y_lo)) / pooled_sd else 0
+        threshold <- 0.50  # Cohen's d
+        detail_fn <- function(d) sprintf("Outcome mean: high-confidence = %.3g, low-confidence = %.3g (std diff = %.2f).",
+                                          mean(y_hi), mean(y_lo), d)
+      }
+
+      if (diff_prop > threshold) {
+        checks[["differential_error"]] <- .pf_check(
+          "Non-differential linkage error",
+          "WARNING",
+          detail_fn(diff_prop),
+          if (method == "adjELE")
+            "adjELE assumes non-differential linkage error. This pattern suggests the assumption may be violated — consider adjMixture() instead, which is more robust to differential error."
+          else
+            "Outcome differs between high/low match-confidence records. Linkage error may be differential. Interpret results cautiously."
+        )
+      } else {
+        checks[["differential_error"]] <- .pf_check(
+          "Non-differential linkage error",
+          "OK",
+          detail_fn(diff_prop),
+          NULL
+        )
+      }
+    }
+  }
+
+  # ── 4. Method-specific sample size ────────────────────────────────────────
+  min_n_method <- switch(method,
+    adjMixBayes  = 300L,   # Stan MCMC needs more draws to converge
+    adjMixture   = 150L,   # EM stable above ~150, especially at high mismatch
+    adjELE       = 100L    # ELE closed-form; smaller n acceptable
+  )
+  min_n_use <- max(min_n, min_n_method)
+
+  if (n < min_n_use) {
+    checks[["sample_size"]] <- .pf_check(
+      "Sample size",
+      if (n < min_n) "ERROR" else "WARNING",
+      sprintf("n = %d. %s() is recommended for n >= %d.", n, method, min_n_use),
+      switch(method,
+        adjMixBayes = "Stan MCMC may not converge reliably with small samples. Consider adjMixture() as a faster alternative.",
+        adjMixture  = "EM convergence can be unstable with small n and high mismatch. Bootstrap CIs are strongly recommended.",
+        "Consider collecting more linked records or using a simpler model."
+      )
     )
   } else {
     checks[["sample_size"]] <- .pf_check(
       "Sample size",
       "OK",
-      sprintf("n = %s.", format(n, big.mark=",")),
+      sprintf("n = %s — adequate for %s().", format(n, big.mark=","), method),
       NULL
     )
   }
 
-  # ── 2. Missing values ─────────────────────────────────────────────────────
+  # ── 5. Missing values ─────────────────────────────────────────────────────
   all_vars  <- c(outcome, predictors)
-  miss_frac <- sapply(linked_data[, all_vars, drop=FALSE],
-                      function(x) mean(is.na(x)))
+  miss_frac <- sapply(linked_data[, all_vars, drop=FALSE], function(x) mean(is.na(x)))
   high_miss <- miss_frac[miss_frac > max_missing]
 
   if (length(high_miss) > 0) {
-    detail <- paste(
-      sprintf("%s (%.1f%%)", names(high_miss), 100 * high_miss),
-      collapse = ", "
-    )
+    detail <- paste(sprintf("%s (%.1f%%)", names(high_miss), 100*high_miss), collapse=", ")
     checks[["missing_values"]] <- .pf_check(
       "Missing values",
       "WARNING",
       paste0("High missingness in: ", detail, "."),
-      "Consider multiple imputation or complete-case analysis. Document missingness assumptions."
+      "In linked datasets, missingness often correlates with linkage quality. Consider multiple imputation that accounts for linkage uncertainty."
     )
   } else {
-    max_miss_pct <- round(100 * max(miss_frac), 1)
     checks[["missing_values"]] <- .pf_check(
       "Missing values",
       "OK",
-      sprintf("Maximum missingness across variables: %.1f%%.", max_miss_pct),
+      sprintf("Maximum missingness: %.1f%%.", 100*max(miss_frac)),
       NULL
     )
   }
 
-  # ── 3. Outcome distribution ───────────────────────────────────────────────
-  y <- linked_data[[outcome]]
-
+  # ── 6. Outcome distribution ───────────────────────────────────────────────
   if (family == "binomial") {
-    if (!all(y %in% c(0, 1, NA))) {
+    if (!all(y %in% c(0L, 1L, NA))) {
       checks[["outcome_dist"]] <- .pf_check(
         "Outcome distribution",
         "ERROR",
-        "Outcome variable has values outside {0, 1} but family = 'binomial'.",
-        "Ensure the outcome is binary (0/1) before fitting a logistic regression."
+        "Outcome has values outside {0, 1} but family = 'binomial'.",
+        "Ensure outcome is coded 0/1 before fitting."
       )
     } else {
-      prop_minority <- min(mean(y == 1, na.rm=TRUE), mean(y == 0, na.rm=TRUE))
-      if (prop_minority < 0.05) {
-        checks[["outcome_dist"]] <- .pf_check(
-          "Outcome distribution",
-          "ERROR",
-          sprintf("Extreme class imbalance: minority class = %.1f%%.", 100 * prop_minority),
-          "Severe imbalance can destabilize EM convergence and inflate mismatch sensitivity. Consider oversampling, undersampling, or a penalized model."
-        )
-      } else if (prop_minority < 0.10) {
-        checks[["outcome_dist"]] <- .pf_check(
-          "Outcome distribution",
-          "WARNING",
-          sprintf("Moderate class imbalance: minority class = %.1f%%.", 100 * prop_minority),
-          "Monitor EM convergence carefully. Report sensitivity analyses with different mismatch rate assumptions."
-        )
-      } else {
-        checks[["outcome_dist"]] <- .pf_check(
-          "Outcome distribution",
-          "OK",
-          sprintf("Class balance OK: %.1f%% positive.", 100 * mean(y == 1, na.rm=TRUE)),
-          NULL
-        )
-      }
+      p_pos <- mean(y == 1, na.rm=TRUE)
+      p_min <- min(p_pos, 1-p_pos)
+      status <- if (p_min < 0.05) "ERROR" else if (p_min < 0.10) "WARNING" else "OK"
+      checks[["outcome_dist"]] <- .pf_check(
+        "Outcome distribution",
+        status,
+        sprintf("%.1f%% positive cases (minority class = %.1f%%).", 100*p_pos, 100*p_min),
+        if (status != "OK")
+          "Severe class imbalance interacts poorly with high mismatch rates. The EM algorithm may misattribute rare outcomes to mismatch noise."
+        else NULL
+      )
     }
   } else if (family == "gaussian") {
-    y_var <- var(y, na.rm=TRUE)
-    if (is.na(y_var) || y_var < .Machine$double.eps) {
-      checks[["outcome_dist"]] <- .pf_check(
-        "Outcome distribution",
-        "ERROR",
-        "Outcome variable has near-zero variance (essentially constant).",
-        "A constant outcome cannot be modelled. Check data extraction or recoding."
-      )
-    } else {
-      checks[["outcome_dist"]] <- .pf_check(
-        "Outcome distribution",
-        "OK",
-        sprintf("Gaussian outcome: mean = %.2f, SD = %.2f.", mean(y, na.rm=TRUE), sqrt(y_var)),
-        NULL
-      )
-    }
-  } else if (family == "poisson") {
-    if (any(y < 0, na.rm=TRUE)) {
-      checks[["outcome_dist"]] <- .pf_check(
-        "Outcome distribution",
-        "ERROR",
-        "Poisson outcome has negative values.",
-        "Poisson regression requires non-negative integer counts."
-      )
-    } else {
-      checks[["outcome_dist"]] <- .pf_check(
-        "Outcome distribution",
-        "OK",
-        sprintf("Poisson outcome: mean = %.2f, range [%g, %g].",
-                mean(y, na.rm=TRUE), min(y, na.rm=TRUE), max(y, na.rm=TRUE)),
-        NULL
-      )
-    }
+    yv <- var(y, na.rm=TRUE)
+    checks[["outcome_dist"]] <- .pf_check(
+      "Outcome distribution",
+      if (is.na(yv) || yv < .Machine$double.eps) "ERROR" else "OK",
+      sprintf("Gaussian outcome: mean = %.3g, SD = %.3g.", mean(y, na.rm=TRUE), sqrt(max(yv, 0))),
+      if (is.na(yv) || yv < .Machine$double.eps)
+        "Outcome has near-zero variance — cannot be modelled." else NULL
+    )
   } else {
-    # cox — just check for non-negative times
     checks[["outcome_dist"]] <- .pf_check(
       "Outcome distribution",
       "OK",
-      "Cox model: survival time checks skipped (pass event vector separately).",
+      sprintf("%s family: basic range check passed.", family),
       NULL
     )
   }
 
-  # ── 4. Predictor variance ──────────────────────────────────────────────────
-  num_preds <- predictors[sapply(linked_data[, predictors, drop=FALSE], is.numeric)]
-  low_var   <- character(0)
-
-  for (pv in num_preds) {
-    v <- var(linked_data[[pv]], na.rm=TRUE)
-    if (!is.na(v) && v < .Machine$double.eps)
-      low_var <- c(low_var, pv)
-  }
-
-  if (length(low_var) > 0) {
-    checks[["predictor_variance"]] <- .pf_check(
-      "Predictor variance",
-      "ERROR",
-      paste0("Near-zero variance predictors: ", paste(low_var, collapse=", "), "."),
-      "Remove or recode these variables before fitting. Constant predictors cause matrix singularity."
-    )
-  } else {
-    checks[["predictor_variance"]] <- .pf_check(
-      "Predictor variance",
-      "OK",
-      sprintf("%d numeric predictor(s) checked — all have acceptable variance.", length(num_preds)),
-      NULL
-    )
-  }
-
-  # ── 5. Collinearity ───────────────────────────────────────────────────────
-  if (length(num_preds) >= 2) {
-    pred_mat    <- linked_data[, num_preds, drop=FALSE]
-    pred_mat    <- pred_mat[complete.cases(pred_mat), , drop=FALSE]
-    high_corr_pairs <- character(0)
-
-    if (nrow(pred_mat) > 1) {
-      cor_mat <- tryCatch(cor(pred_mat), error=function(e) NULL)
-      if (!is.null(cor_mat)) {
-        for (i in seq_len(nrow(cor_mat)-1)) {
-          for (j in seq(i+1, ncol(cor_mat))) {
-            if (!is.na(cor_mat[i,j]) && abs(cor_mat[i,j]) > 0.95)
-              high_corr_pairs <- c(high_corr_pairs,
-                sprintf("%s & %s (r = %.3f)", rownames(cor_mat)[i],
-                        colnames(cor_mat)[j], cor_mat[i,j]))
-          }
-        }
-      }
-    }
-
-    if (length(high_corr_pairs) > 0) {
-      checks[["collinearity"]] <- .pf_check(
-        "Collinearity",
-        "WARNING",
-        paste0("Near-perfect collinearity (|r| > 0.95): ", paste(high_corr_pairs, collapse="; "), "."),
-        "Consider removing one variable from each collinear pair, or using a regularized model."
-      )
-    } else {
-      checks[["collinearity"]] <- .pf_check(
-        "Collinearity",
-        "OK",
-        "No predictor pairs with |r| > 0.95 detected.",
-        NULL
-      )
-    }
-  } else {
-    checks[["collinearity"]] <- .pf_check(
-      "Collinearity",
-      "OK",
-      "Fewer than 2 numeric predictors — collinearity check skipped.",
-      NULL
-    )
-  }
-
-  # ── 6. Match probability quality ──────────────────────────────────────────
-  if (!is.null(match_prob)) {
-    if (length(match_prob) != n) {
-      checks[["match_quality"]] <- .pf_check(
-        "Match probability quality",
-        "WARNING",
-        sprintf("Length of match_prob (%d) != nrow(linked_data) (%d). Skipping match quality checks.",
-                length(match_prob), n),
-        "Ensure match.prob corresponds to the same linked dataset."
-      )
-    } else {
-      mean_mp    <- mean(match_prob, na.rm=TRUE)
-      pct_low    <- mean(match_prob < 0.3, na.rm=TRUE)
-      pct_hi     <- mean(match_prob > 0.9, na.rm=TRUE)
-      mismatch_r <- 1 - mean_mp
-
-      if (mean_mp < 0.5) {
-        checks[["match_quality"]] <- .pf_check(
-          "Match probability quality",
-          "ERROR",
-          sprintf("Mean match probability = %.3f. Implies >50%% mismatch rate.", mean_mp),
-          "Very low match quality. Revisit linkage criteria before running adjustment models."
-        )
-      } else if (pct_low > 0.20 || mismatch_r > 0.20) {
-        checks[["match_quality"]] <- .pf_check(
-          "Match probability quality",
-          "WARNING",
-          sprintf("Mean match prob = %.3f (implied mismatch ~%.1f%%). %.1f%% of records have prob < 0.3.",
-                  mean_mp, 100*mismatch_r, 100*pct_low),
-          "Consider reviewing linkage blocking strategy or using safe.matches for high-confidence pairs."
-        )
-      } else {
-        checks[["match_quality"]] <- .pf_check(
-          "Match probability quality",
-          "OK",
-          sprintf("Mean match prob = %.3f (implied mismatch ~%.1f%%). %.1f%% of records exceed 0.9.",
-                  mean_mp, 100*mismatch_r, 100*pct_hi),
-          NULL
-        )
-      }
-    }
-  }
-
-  # ── Compile results ────────────────────────────────────────────────────────
-  checks_df <- do.call(rbind, lapply(checks, as.data.frame, stringsAsFactors=FALSE))
+  # ── Compile ────────────────────────────────────────────────────────────────
+  checks_df  <- do.call(rbind, lapply(checks, as.data.frame, stringsAsFactors=FALSE))
   rownames(checks_df) <- NULL
-
   n_errors   <- sum(checks_df$status == "ERROR")
   n_warnings <- sum(checks_df$status == "WARNING")
   passed     <- n_errors == 0
@@ -395,42 +377,51 @@ preflight_check <- function(linked_data,
         sprintf("[%s] %s: %s", r["status"], r["check"], r["detail"])
       ), collapse="\n")
 
-      system_msg <- paste0(
-        "You are a statistical consultant advising on record linkage analysis in R. ",
-        "The user is about to run a linkage error correction model using the postlink package. ",
-        "Given the data quality issues below, provide concise, actionable recommendations. ",
-        "Be specific about R functions or arguments where relevant. 3-5 sentences max."
+      sys_msg <- paste0(
+        "You are a statistical consultant specialising in record linkage and ",
+        "linkage error correction in R. The user is about to run ", method,
+        "() from the postlink package. Given the data quality issues below, ",
+        "provide concise, actionable recommendations specific to the linkage ",
+        "setting. Reference postlink arguments (safe.matches, m.rate, etc.) ",
+        "where relevant. 4–6 sentences max."
       )
-      user_msg <- paste0(
-        "Dataset: n = ", format(n, big.mark=","), ", outcome family = '", family, "'\n",
-        "Issues detected:\n", issue_lines, "\n\n",
-        "What should the analyst do before running adjMixture() / adjELE() / adjMixBayes()?"
+      usr_msg <- paste0(
+        "Dataset: n = ", format(n, big.mark=","),
+        ", method = ", method,
+        ", family = ", family, "\n",
+        if (!is.na(mismatch_rate))
+          paste0("Implied mismatch rate: ", round(100*mismatch_rate, 1), "%\n")
+        else "",
+        "Issues:\n", issue_lines
       )
 
-      message("Querying ", provider, " API for recommendations...")
+      message("Querying ", provider, " for recommendations...")
       tryCatch({
-        result  <- .call_llm(user_msg, system_msg, provider, api_key, model, max_tokens=400)
-        ai_recs <- result$text
-      }, error = function(e) {
-        warning("AI recommendations failed: ", conditionMessage(e), call. = FALSE)
+        res     <- .call_llm(usr_msg, sys_msg, provider, api_key, model, max_tokens=400)
+        ai_recs <- res$text
+      }, error=function(e) {
+        warning("AI call failed: ", conditionMessage(e), call.=FALSE)
       })
     } else {
-      ai_recs <- "All checks passed. No issues to address before proceeding."
+      ai_recs <- "All checks passed — no issues to address before running the adjustment model."
     }
   }
 
-  # ── Output object ─────────────────────────────────────────────────────────
+  # ── Return ────────────────────────────────────────────────────────────────
   out <- structure(
-    list(checks            = checks_df,
-         n_errors          = n_errors,
-         n_warnings        = n_warnings,
-         pass              = passed,
-         ai_recommendations = ai_recs),
+    list(checks             = checks_df,
+         n_errors           = n_errors,
+         n_warnings         = n_warnings,
+         pass               = passed,
+         ai_recommendations = ai_recs,
+         mismatch_rate      = mismatch_rate,
+         method             = method,
+         family             = family,
+         n                  = n),
     class = "postlink_preflight"
   )
 
   if (verbose) print(out)
-
   invisible(out)
 }
 
@@ -438,50 +429,48 @@ preflight_check <- function(linked_data,
 # ── print method ──────────────────────────────────────────────────────────────
 #' @export
 print.postlink_preflight <- function(x, ...) {
-  cat("\n=== postlink: Pre-Flight Diagnostic ===\n\n")
+  cat("\n=== postlink: Pre-Flight Diagnostic ===\n")
+  cat(sprintf("    Method: %s() | Family: %s | n = %s\n",
+              x$method, x$family, format(x$n, big.mark=",")))
+  if (!is.na(x$mismatch_rate))
+    cat(sprintf("    Implied mismatch rate: %.1f%%\n", 100*x$mismatch_rate))
+  cat("\n")
 
-  icons <- c(OK = "✓", WARNING = "⚠", ERROR = "✗")
-  colors_avail <- tryCatch({ crayon::green; TRUE }, error=function(e) FALSE)
+  icons <- c(OK="✓", WARNING="⚠", ERROR="✗")
 
   for (i in seq_len(nrow(x$checks))) {
     r   <- x$checks[i, ]
     ico <- icons[r$status]
-    cat(sprintf("  %s [%s] %s\n", ico, r$status, r$check))
-    cat(sprintf("     %s\n", r$detail))
+    cat(sprintf("  %s [%-7s] %s\n", ico, r$status, r$check))
+    cat(sprintf("           %s\n", r$detail))
     if (!is.na(r$recommendation) && nchar(r$recommendation) > 0)
-      cat(sprintf("     ➜ %s\n", r$recommendation))
+      cat(sprintf("           ➜ %s\n", r$recommendation))
     cat("\n")
   }
 
   if (x$n_errors == 0 && x$n_warnings == 0) {
-    cat("Result: PASS — no issues detected. Ready to run adjustment models.\n")
+    cat("Result: PASS — ready to run adjustment models.\n")
   } else {
-    cat(sprintf("Result: %d ERROR(s), %d WARNING(s) detected.\n",
-                x$n_errors, x$n_warnings))
-    if (!x$pass)
-      cat("Action required: resolve ERROR(s) before proceeding.\n")
-    else
-      cat("Review WARNING(s) and proceed with caution.\n")
+    cat(sprintf("Result: %d ERROR(s)  %d WARNING(s)\n", x$n_errors, x$n_warnings))
+    if (!x$pass) cat("        Resolve ERROR(s) before proceeding.\n")
+    else         cat("        Review WARNING(s) and proceed with caution.\n")
   }
 
   if (!is.null(x$ai_recommendations)) {
     cat("\n--- AI Recommendations ---\n")
-    cat(x$ai_recommendations)
-    cat("\n[AI-generated. Verify before use.]\n")
+    cat(x$ai_recommendations, "\n")
+    cat("[AI-generated — verify before use]\n")
   }
-
   cat("\n")
   invisible(x)
 }
 
 
-# ── Helper: build a single check row ─────────────────────────────────────────
+# ── Internal helper ───────────────────────────────────────────────────────────
 #' @noRd
 .pf_check <- function(check, status, detail, recommendation) {
-  list(
-    check          = check,
-    status         = status,
-    detail         = detail,
-    recommendation = if (is.null(recommendation)) NA_character_ else recommendation
-  )
+  list(check          = check,
+       status         = status,
+       detail         = detail,
+       recommendation = if (is.null(recommendation)) NA_character_ else recommendation)
 }
