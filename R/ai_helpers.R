@@ -149,10 +149,8 @@
   if (!is.null(seed))        body$seed        <- as.integer(seed)
 
   resp <- httr2::request("https://api.openai.com/v1/chat/completions") |>
-    httr2::req_headers("Authorization" = paste("Bearer", api_key),
-                       "content-type"  = "application/json") |>
-    httr2::req_body_raw(jsonlite::toJSON(body, auto_unbox = TRUE),
-                        type = "application/json") |>
+    httr2::req_headers("Authorization" = paste("Bearer", api_key)) |>
+    httr2::req_body_json(body, auto_unbox = TRUE) |>
     httr2::req_timeout(60) |>
     httr2::req_error(is_error = function(r) FALSE) |>
     httr2::req_perform()
@@ -210,9 +208,10 @@
   )
 
   url  <- paste0("https://generativelanguage.googleapis.com/v1beta/models/",
-                 model, ":generateContent?key=", api_key)
+                 model, ":generateContent")
   resp <- httr2::request(url) |>
-    httr2::req_headers("content-type" = "application/json") |>
+    httr2::req_headers("content-type"    = "application/json",
+                       "x-goog-api-key"  = api_key) |>
     httr2::req_body_json(body) |>
     httr2::req_timeout(60) |>
     httr2::req_error(is_error = function(r) FALSE) |>
@@ -316,9 +315,9 @@
     match_info <- if (!is.null(mp))
       sprintf("mean posterior correct match probability = %.3f (implied mismatch rate ~%.1f%%)",
               mean(mp), 100*(1-mean(mp))) else NULL
-    mrate_used <- tryCatch(as.character(fit$call$adjustment$m.rate), error=function(e) NULL)
-    safe_used  <- !is.null(tryCatch(fit$call$adjustment$safe.matches, error=function(e) NULL))
-    mformula   <- tryCatch(deparse(fit$call$adjustment$m.formula), error=function(e) "~1")
+    mrate_used <- tryCatch(as.character(fit$adjustment$m.rate), error=function(e) NULL)
+    safe_used  <- !is.null(tryCatch(fit$adjustment$safe.matches, error=function(e) NULL))
+    mformula   <- tryCatch(deparse(fit$adjustment$m.formula), error=function(e) "~1")
 
     extras <- Filter(Negate(is.null), c(
       if (!is.null(mrate_used)) paste0("global mismatch rate constraint: ", mrate_used),
@@ -363,7 +362,7 @@
     ))
   }
 
-  if (inherits(fit, c("glmMixBayes","survregMixBayes"))) {
+  if (inherits(fit, c("glmMixBayes","survMixBayes"))) {
     return(list(
       method_short = "Bayesian Mixture Model (adjMixBayes)",
       method_description = paste0(
@@ -393,7 +392,7 @@
 #' @noRd
 .get_coef_df <- function(fit) {
   postlink_classes <- c("glmMixture","glmELE","glmMixBayes",
-                        "coxphMixture","coxphELE","survregMixBayes","ctableMixture")
+                        "coxphMixture","coxphELE","survMixBayes","ctableMixture")
 
   # Standard glm/lm — use summary() for exact p-values
   if (!any(sapply(postlink_classes, function(cl) inherits(fit, cl)))) {
@@ -410,7 +409,60 @@
     }
   }
 
-  # postlink objects — extract estimate + SE; compute z and p ourselves
+  # glmELE: use summary()$coefficients[[1]] (first estimator matrix)
+  if (inherits(fit, "glmELE")) {
+    cf <- tryCatch(summary(fit)$coefficients[[1]], error = function(e) NULL)
+    if (!is.null(cf) && is.matrix(cf) && ncol(cf) >= 4) {
+      return(data.frame(
+        term      = rownames(cf),
+        estimate  = round(as.numeric(cf[, 1]), 4),
+        se        = round(as.numeric(cf[, 2]), 4),
+        statistic = round(as.numeric(cf[, 3]), 3),
+        p_value   = round(as.numeric(cf[, 4]), 4),
+        row.names = NULL, stringsAsFactors = FALSE
+      ))
+    }
+  }
+
+  # glmMixBayes / survMixBayes: fit$coefficients and fit$var don't exist;
+  # use posterior mean and SD from fit$estimates$coefficients
+  if (inherits(fit, c("glmMixBayes", "survMixBayes"))) {
+    post_coef <- tryCatch(fit$estimates$coefficients, error = function(e) NULL)
+    if (!is.null(post_coef) && is.matrix(post_coef)) {
+      est        <- colMeans(post_coef)
+      se         <- apply(post_coef, 2, sd)
+      term_names <- colnames(post_coef)
+    } else {
+      est        <- numeric(0)
+      se         <- numeric(0)
+      term_names <- character(0)
+    }
+    z_val <- as.numeric(est) / as.numeric(se)
+    return(data.frame(
+      term      = term_names,
+      estimate  = round(as.numeric(est), 4),
+      se        = round(as.numeric(se),  4),
+      statistic = round(z_val, 3),
+      p_value   = round(2 * pnorm(-abs(z_val)), 4),
+      row.names = NULL, stringsAsFactors = FALSE
+    ))
+  }
+
+  # Other postlink objects (glmMixture, coxphMixture, coxphELE, ctableMixture):
+  # use summary() where available, fall back to fit$coefficients + fit$var
+  cf <- tryCatch(coef(summary(fit)), error = function(e) NULL)
+  if (!is.null(cf) && is.matrix(cf) && ncol(cf) >= 4) {
+    return(data.frame(
+      term      = rownames(cf),
+      estimate  = round(as.numeric(cf[, 1]), 4),
+      se        = round(as.numeric(cf[, 2]), 4),
+      statistic = round(as.numeric(cf[, 3]), 3),
+      p_value   = round(as.numeric(cf[, 4]), 4),
+      row.names = NULL, stringsAsFactors = FALSE
+    ))
+  }
+
+  # Last-resort fallback: manual extraction from fit$coefficients + fit$var
   if (is.matrix(fit$coefficients)) {
     est        <- fit$coefficients[1, ]
     term_names <- colnames(fit$coefficients)
@@ -582,7 +634,7 @@ explain <- function(fit,
 
   is_fit_list <- is.list(fit) && !inherits(fit, c(
     "glm","lm","glmMixture","glmELE","glmMixBayes",
-    "coxphMixture","coxphELE","survregMixBayes","ctableMixture"
+    "coxphMixture","coxphELE","survMixBayes","ctableMixture"
   ))
 
   if (is_fit_list) {

@@ -106,7 +106,7 @@ generate_report <- function(fit,
   # ── Detect single vs list ──────────────────────────────────────────────────
   is_fit_list <- is.list(fit) && !inherits(fit, c(
     "glm","lm","glmMixture","glmELE","glmMixBayes",
-    "coxphMixture","coxphELE","survregMixBayes","ctableMixture"
+    "coxphMixture","coxphELE","survMixBayes","ctableMixture"
   ))
 
   if (is_fit_list) {
@@ -117,7 +117,7 @@ generate_report <- function(fit,
 
     # Primary model = last postlink object in the list
     postlink_classes <- c("glmMixture","glmELE","glmMixBayes",
-                          "coxphMixture","coxphELE","survregMixBayes","ctableMixture")
+                          "coxphMixture","coxphELE","survMixBayes","ctableMixture")
     is_postlink <- sapply(fit, function(m) any(sapply(postlink_classes, function(cl) inherits(m, cl))))
 
     if (!any(is_postlink))
@@ -138,12 +138,14 @@ generate_report <- function(fit,
   provider <- if (!is.null(provider)) provider else .detect_provider(NULL)
   api_key  <- .resolve_key(api_key, provider)
   message("Querying ", provider, " API for plain-language summary...")
-  ai_summary  <- .summarise_with_ai(info, context, fit_list, provider, api_key, model)
-  report_text <- .build_report(info, ai_summary, output_format)
+  ai_res      <- .summarise_with_ai(info, context, fit_list, provider, api_key, model)
+  report_text <- .build_report(info, ai_res$text, output_format)
 
   if (output_format == "text") {
+    out <- report_text
+    attr(out, "postlink_metadata") <- ai_res$metadata
     cat(report_text)
-    return(invisible(report_text))
+    return(invisible(out))
   }
 
   if (is.null(output_file)) {
@@ -179,7 +181,9 @@ generate_report <- function(fit,
   }
 
   cat("[Review all AI-generated text before submitting or publishing.]\n")
-  invisible(output_file)
+  out <- output_file
+  attr(out, "postlink_metadata") <- ai_res$metadata
+  invisible(out)
 }
 
 
@@ -192,12 +196,12 @@ generate_report <- function(fit,
 
   is_mixture <- inherits(fit, c("glmMixture","coxphMixture","ctableMixture"))
   is_ele     <- inherits(fit, c("glmELE","coxphELE"))
-  is_bayes   <- inherits(fit, c("glmMixBayes","survregMixBayes"))
+  is_bayes   <- inherits(fit, c("glmMixBayes","survMixBayes"))
 
   method_short <- if (is_mixture) "EM Mixture Model"
                   else if (is_ele) "ELE Weighting"
                   else if (is_bayes) "Bayesian Mixture Model"
-                  else "postlink adjustment"
+                  else "No adjustment (Naive)"
 
   ref <- if (is_mixture) {
     paste0("Slawski, M., West, B. T., Bukke, P., Wang, Z., Diao, G., & Ben-David, E. (2025). ",
@@ -206,10 +210,12 @@ generate_report <- function(fit,
   } else if (is_ele) {
     paste0("Chambers, R. (2009). Regression analysis of probability-linked data. ",
            "*Official Statistics Research Series*, 4, 1-15.")
-  } else {
+  } else if (is_bayes) {
     paste0("Gutman, R., Sammartino, C. J., Green, T. C., & Montague, B. T. (2016). ",
            "Error adjustments for file linking methods. ",
            "*Statistics in Medicine*, 35(1), 115-129.")
+  } else {
+    NULL
   }
 
   family_name  <- tryCatch(fit$family$family, error = function(e) "unknown")
@@ -227,9 +233,9 @@ generate_report <- function(fit,
   formula_str     <- tryCatch(deparse(fit$call$formula), error = function(e) "")
 
   # Coefficient table — primary adjusted model only
+  # p_values come from .get_coef_df() (uses summary() internally); do NOT overwrite.
   coef_df <- .get_coef_df(fit)
-  coef_df$z_stat  <- round(coef_df$estimate / coef_df$se, 3)
-  coef_df$p_value <- round(2 * pnorm(-abs(coef_df$z_stat)), 4)
+  coef_df$z_stat <- round(coef_df$estimate / coef_df$se, 3)
 
   ci <- tryCatch(confint(fit), error = function(e) NULL)
   mcoef_df <- NULL
@@ -272,9 +278,9 @@ generate_report <- function(fit,
 
   mixture_paradata <- NULL
   if (is_mixture) {
-    mformula <- tryCatch(deparse(fit$call$adjustment$m.formula), error=function(e) NULL)
-    mrate    <- tryCatch(as.character(fit$call$adjustment$m.rate), error=function(e) NULL)
-    has_safe <- !is.null(tryCatch(fit$call$adjustment$safe.matches, error=function(e) NULL))
+    mformula <- tryCatch(deparse(fit$adjustment$m.formula), error=function(e) NULL)
+    mrate    <- tryCatch(as.character(fit$adjustment$m.rate), error=function(e) NULL)
+    has_safe <- !is.null(tryCatch(fit$adjustment$safe.matches, error=function(e) NULL))
     mixture_paradata <- list(
       mformula       = mformula,
       mrate          = mrate,
